@@ -14,9 +14,9 @@ import freechips.rocketchip.subsystem._
 import freechips.rocketchip.tilelink._
 import freechips.rocketchip.devices.tilelink._
 import freechips.rocketchip.util._
-import freechips.rocketchip.diplomaticobjectmodel.DiplomaticObjectModelAddressing
-import freechips.rocketchip.diplomaticobjectmodel.model.{OMComponent, OMRegister}
-import freechips.rocketchip.diplomaticobjectmodel.logicaltree.{LogicalModuleTree, LogicalTreeNode}
+
+
+
 
 import sifive.blocks.devices.pinctrl.{PinCtrl, Pin, BasePin, EnhancedPin, EnhancedPinCtrl}
 import sifive.blocks.util.{DeviceParams,DeviceAttachParams}
@@ -37,6 +37,15 @@ class IOFPortIO(val w: Int) extends Bundle {
   val iof_1 = Vec(w, new IOFPin).flip
 }
 
+/** GPIO Parameters
+  *
+  * @param address bass address of CSRs
+  * @param width width of gpio pins
+  * @param includeIOF HW I/O functon
+  * @param dsWidth pin drive strength  selection
+  * @param hasPS weak PU/PD Resistor Selection
+  * @param hasPOE nandtree nand
+  */
 case class GPIOParams(
   address: BigInt,
   width: Int,
@@ -61,6 +70,7 @@ abstract class GPIO(busWidthBytes: Int, c: GPIOParams)(implicit p: Parameters)
   val iofPort = iofNode.map { node => InModuleBody { node.bundle } }
 
   def nInterrupts = c.width
+  // todo
   override def extraResources(resources: ResourceBindings) = Map(
     "gpio-controller"      -> Nil,
     "#gpio-cells"          -> Seq(ResourceInt(2)),
@@ -74,12 +84,17 @@ abstract class GPIO(busWidthBytes: Int, c: GPIOParams)(implicit p: Parameters)
   // -------------------------------------------------
 
   // SW Control only.
+  /** output value */
   val portReg = Reg(init = UInt(0, c.width))
-
+  /** output enable */
   val oeReg  = Module(new AsyncResetRegVec(c.width, 0))
+  /** internal pull-up enable */
   val pueReg = Module(new AsyncResetRegVec(c.width, 0))
+  /** drive strength */
   val dsReg  = RegInit(VecInit(Seq.fill(c.dsWidth)(UInt(0, c.width))))
+  /** input enable */
   val ieReg  = Module(new AsyncResetRegVec(c.width, 0))
+  /** weak PU/PD Resistor Selection */
   val psReg  = Reg(init = UInt(0, c.width))
   val poeReg = Module(new AsyncResetRegVec(c.width, 0))
 
@@ -106,13 +121,16 @@ abstract class GPIO(busWidthBytes: Int, c: GPIOParams)(implicit p: Parameters)
   val iofSelReg = Reg(init = UInt(0, c.width))
   
   // Invert Output
+  // todo why invert
   val xorReg    = Reg(init = UInt(0, c.width))
 
   //--------------------------------------------------
   // CSR Access Logic (most of this section is boilerplate)
   // -------------------------------------------------
-
+  // edge detection logic
+  /** edge rise */
   val rise = ~valueReg & inSyncReg;
+  /** edge fall */
   val fall = valueReg & ~inSyncReg;
 
   val iofEnFields =  if (c.includeIOF) (Seq(RegField.rwReg(c.width, iofEnReg.io,
@@ -177,7 +195,6 @@ abstract class GPIO(busWidthBytes: Int, c: GPIOParams)(implicit p: Parameters)
     GPIOCtrlRegs.poe + dsOffset -> poeFields
   )
   regmap(mapping ++ dsRegMap :_*)
-  val omRegMap = OMRegister.convert(mapping:_*)
 
   //--------------------------------------------------
   // Actual Pinmux
@@ -230,7 +247,7 @@ abstract class GPIO(busWidthBytes: Int, c: GPIOParams)(implicit p: Parameters)
     } else {
       pre_xor := swPinCtrl(pin)
     }
-
+    // port output
     port.pins(pin).o      := pre_xor
     port.pins(pin).o.oval := pre_xor.oval ^ xorReg(pin)
 
@@ -248,19 +265,6 @@ abstract class GPIO(busWidthBytes: Int, c: GPIOParams)(implicit p: Parameters)
       iofPort.get.iof_1(pin).i.ival := inSyncReg(pin)
     }
   }}
-
-  val logicalTreeNode = new LogicalTreeNode(() => Some(device)) {
-    def getOMComponents(resourceBindings: ResourceBindings, children: Seq[OMComponent] = Nil): Seq[OMComponent] = {
-      Seq(
-        OMGPIO(
-          hasIOF = c.includeIOF,
-          nPins = c.width,
-          memoryRegions = DiplomaticObjectModelAddressing.getOMMemoryRegions("GPIO", resourceBindings, Some(module.omRegMap)),
-          interrupts = DiplomaticObjectModelAddressing.describeGlobalInterrupts(device.describe(resourceBindings).name, resourceBindings),
-        )
-      )
-    }
-  }
 }
 
 class TLGPIO(busWidthBytes: Int, params: GPIOParams)(implicit p: Parameters)
@@ -313,8 +317,6 @@ case class GPIOAttachParams(
       case _: AsynchronousCrossing => where.ibus.fromAsync
     }) := gpio.intXing(intXType)
 
-    LogicalModuleTree.add(where.logicalTreeNode, gpio.logicalTreeNode)
-
     gpio
   }
 }
@@ -326,7 +328,7 @@ object GPIO {
     val gpioNode = node.makeSink()
     InModuleBody { gpioNode.makeIO()(ValName(name)) }
   }
-
+  // assign false to all the pins's ival
   def tieoff(g: GPIOPortIO){
     g.pins.foreach { p =>
       p.i.ival := false.B
