@@ -9,21 +9,25 @@ import freechips.rocketchip.util._
 class UARTTx(c: UARTParams) extends Module {
   val io = new Bundle {
     val en = Bool(INPUT)
-    /** parellel input */
     val in = Decoupled(Bits(width = c.dataBits)).flip
-    /** serial output */
     val out = Bits(OUTPUT, 1)
+    //todo frequency control
     val div = UInt(INPUT, c.divisorBits)
-    /** width of stop bits */
+    /** Number of stop bits */
     val nstop = UInt(INPUT, log2Up(c.stopBits))
-    /** busy bit */
     val tx_busy = Bool(OUTPUT)
+    /** party enable */
     val enparity = c.includeParity.option(Bool(INPUT))
-    val parity = c.includeParity.option(Bool(INPUT))
-    /** select 8bit or 9bit
+    /** parity select
       *
-      * 0 -> 9bit
-      * 1 -> 8bit
+      * 0 -> even parity
+      * 1 -> odd parity
+      */
+    val parity = c.includeParity.option(Bool(INPUT))
+    /** bit select
+      *
+      * ture -> 8
+      * false -> 9
       */
     val data8or9 = (c.dataBits == 9).option(Bool(INPUT))
     val cts_n = c.includeFourWire.option(Bool(INPUT))
@@ -31,18 +35,11 @@ class UARTTx(c: UARTParams) extends Module {
 
   val prescaler = Reg(init = UInt(0, c.divisorBits))
   val pulse = (prescaler === UInt(0))
-  // total bit number
-  // start bit = 1
-  // databits = 8
-  // includeparity = 1
+
   private val n = c.dataBits + 1 + c.includeParity.toInt
-  /** working count
-    *
-    * when count == 0, stop*/
+  /** contains databit(8or9), start bit, stop bit and parity bit*/
   val counter = Reg(init = UInt(0, log2Floor(n + c.stopBits) + 1))
-  // shifter reg, parellel in serial out
   val shifter = Reg(Bits(width = n))
-  // output reg
   val out = Reg(init = Bits(1, 1))
   io.out := out
 
@@ -56,10 +53,16 @@ class UARTTx(c: UARTParams) extends Module {
   }
   when (io.in.fire() && plusarg_tx) {
     if (c.includeParity) {
-      // bit(8) or false
       val includebit9 = if (c.dataBits == 9) Mux(io.data8or9.get, Bool(false), io.in.bits(8)) else Bool(false)
+
       val parity = Mux(io.enparity.get, includebit9 ^ io.in.bits(7,0).asBools.reduce(_ ^ _) ^ io.parity.get, Bool(true))
-      val paritywithbit9 = if (c.dataBits == 9) Mux(io.data8or9.get, Cat(1.U(1.W), parity), Cat(parity, io.in.bits(8))) 
+
+      val paritywithbit9 = if (c.dataBits == 9) Mux(io.data8or9.get,
+        //8-bits, have bit9 but disable
+        Cat(1.U(1.W), parity),
+        //9-bits
+        Cat(parity, io.in.bits(8)))
+        //8-bits
                            else Cat(1.U(1.W), parity)
       shifter := Cat(paritywithbit9, io.in.bits(7,0), Bits(0, 1))
       counter := Mux1H((0 until c.stopBits).map(i =>
