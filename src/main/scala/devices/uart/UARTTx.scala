@@ -16,7 +16,7 @@ class UARTTx(c: UARTParams) extends Module {
     /** Number of stop bits */
     val nstop = UInt(INPUT, log2Up(c.stopBits))
     val tx_busy = Bool(OUTPUT)
-    /** party enable */
+    /** parity enable */
     val enparity = c.includeParity.option(Bool(INPUT))
     /** parity select
       *

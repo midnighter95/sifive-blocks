@@ -12,7 +12,13 @@ class UARTRx(c: UARTParams) extends Module {
     val in = Bits(INPUT, 1)
     val out = Valid(Bits(width = c.dataBits))
     val div = UInt(INPUT, c.divisorBits)
+    /** parity enable */
     val enparity = c.includeParity.option(Bool(INPUT))
+    /** parity select
+      *
+      * 0 -> even parity
+      * 1 -> odd parity
+      */
     val parity = c.includeParity.option(Bool(INPUT))
     val errorparity = c.includeParity.option(Bool(OUTPUT))
     val data8or9 = (c.dataBits == 9).option(Bool(INPUT))
@@ -27,16 +33,27 @@ class UARTRx(c: UARTParams) extends Module {
 
   val prescaler = Reg(UInt(width = c.divisorBits - c.oversample + 1))
   val start = Wire(init = Bool(false))
+  /** when true, start reciving a bit*/
   val pulse = (prescaler === UInt(0))
 
   private val dataCountBits = log2Floor(c.dataBits+c.includeParity.toInt) + 1
-
+  /** init = data bits(8,9) + parity bit(0,1) + start bit(1) */
   val data_count = Reg(UInt(width = dataCountBits))
   val data_last = (data_count === UInt(0))
   val parity_bit = (data_count === UInt(1)) && io.enparity.getOrElse(false.B)
+  // init sample_count = 15 - 1 = 14
   val sample_count = Reg(UInt(width = c.oversample))
+  /** sample_mid == 7.U */
   val sample_mid = (sample_count === UInt((c.oversampleFactor - c.nSamples + 1) >> 1))
+  // todo unused
   val sample_last = (sample_count === UInt(0))
+  /** countdown
+    *
+    * {{{
+    * |                  |                 |
+    * |    data_count    |   sample_count  |
+    * }}}
+    * */
   val countdown = Cat(data_count, sample_count) - UInt(1)
 
   // Compensate for the divisor not being a multiple of the oversampling period.
@@ -44,12 +61,21 @@ class UARTRx(c: UARTParams) extends Module {
   // For the last k samples, extend the sampling delay by 1 cycle.
   val remainder = io.div(c.oversample-1, 0)
   val extend = (sample_count < remainder) // Pad head: (sample_count > ~remainder)
+  /** returns true if
+    * {{{
+    * transmisson starts
+    * transmisson proceeds}}}
+    *
+    * when true, init prescaler = io.div >> c.oversample
+    *
+    * */
   val restore = start || pulse
   val prescaler_in = Mux(restore, io.div >> c.oversample, prescaler)
   val prescaler_next = prescaler_in - Mux(restore && extend, UInt(0), UInt(1))
 
   val sample = Reg(Bits(width = c.nSamples))
   val voter = Majority(sample.asBools.toSet)
+  //shifter output
   val shifter = Reg(Bits(width = c.dataBits))
 
   val valid = Reg(init = Bool(false))
@@ -71,7 +97,9 @@ class UARTRx(c: UARTParams) extends Module {
           state := s_data
           start := Bool(true)
           prescaler := prescaler_next
+          // init data_count
           data_count := UInt(c.dataBits+1) + (if (c.includeParity) io.enparity.get else 0.U) - io.data8or9.getOrElse(false.B).asUInt
+          // init sample_count
           sample_count := UInt(c.oversampleFactor - 1)
         }
       }
@@ -80,6 +108,7 @@ class UARTRx(c: UARTParams) extends Module {
     is (s_data) {
       prescaler := prescaler_next
       when (pulse) {
+        // shift input data to sample
         sample := Cat(sample, io.in)
         data_count := countdown >> c.oversample
         sample_count := countdown(c.oversample-1, 0)

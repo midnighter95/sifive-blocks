@@ -24,12 +24,12 @@ import sifive.blocks.util._
   * @param dataBits number of bits in data frame
   * @param stopBits number of stop bits
   * @param divisorBits
-  * @param oversample
+  * @param oversample used in Rx
   * @param nSamples
   * @param nTxEntries
   * @param nRxEntries
   * @param includeFourWire
-  * @param includeParity
+  * @param includeParity parity support
   * @param includeIndependentParity
   * @param initBaudRate
   * */
