@@ -6,6 +6,11 @@ import freechips.rocketchip.util.CompileOptions.NotStrictInferReset
 
 import freechips.rocketchip.util._
 
+/**
+  *
+  * clk : T
+  * data : div T
+  * */
 class UARTTx(c: UARTParams) extends Module {
   val io = new Bundle {
     val en = Bool(INPUT)

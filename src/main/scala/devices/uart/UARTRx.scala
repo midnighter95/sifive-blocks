@@ -6,6 +6,16 @@ import freechips.rocketchip.util.CompileOptions.NotStrictInferReset
 
 import freechips.rocketchip.util._
 
+
+/**
+  * prescalaer: 3->2->1->0 => pulse
+  * for each pulse, sample_count(init = 14) - 1, when sample_count == 0, data_count(init = databit) - 1
+  *   clk : T
+  *   sample : div/16 T
+  *   data : div/16 x 16 T
+  *
+  *
+  */
 class UARTRx(c: UARTParams) extends Module {
   val io = new Bundle {
     val en = Bool(INPUT)
@@ -41,7 +51,7 @@ class UARTRx(c: UARTParams) extends Module {
   val data_count = Reg(UInt(width = dataCountBits))
   val data_last = (data_count === UInt(0))
   val parity_bit = (data_count === UInt(1)) && io.enparity.getOrElse(false.B)
-  // init sample_count = 15 - 1 = 14
+  // init sample_count = 15
   val sample_count = Reg(UInt(width = c.oversample))
   /** sample_mid == 7.U */
   val sample_mid = (sample_count === UInt((c.oversampleFactor - c.nSamples + 1) >> 1))
@@ -50,7 +60,6 @@ class UARTRx(c: UARTParams) extends Module {
   /** countdown
     *
     * {{{
-    * |                  |                 |
     * |    data_count    |   sample_count  |
     * }}}
     * */
@@ -63,7 +72,7 @@ class UARTRx(c: UARTParams) extends Module {
   val extend = (sample_count < remainder) // Pad head: (sample_count > ~remainder)
   /** returns true if
     * {{{
-    * transmisson starts
+    * transmisson starts or
     * transmisson proceeds}}}
     *
     * when true, init prescaler = io.div >> c.oversample
@@ -72,8 +81,9 @@ class UARTRx(c: UARTParams) extends Module {
   val restore = start || pulse
   val prescaler_in = Mux(restore, io.div >> c.oversample, prescaler)
   val prescaler_next = prescaler_in - Mux(restore && extend, UInt(0), UInt(1))
-
+  // todo only take in sample when sample_count==4,5,6
   val sample = Reg(Bits(width = c.nSamples))
+  // take the majority bit of sample
   val voter = Majority(sample.asBools.toSet)
   //shifter output
   val shifter = Reg(Bits(width = c.dataBits))
@@ -99,7 +109,7 @@ class UARTRx(c: UARTParams) extends Module {
           prescaler := prescaler_next
           // init data_count
           data_count := UInt(c.dataBits+1) + (if (c.includeParity) io.enparity.get else 0.U) - io.data8or9.getOrElse(false.B).asUInt
-          // init sample_count
+          // init sample_count = 15
           sample_count := UInt(c.oversampleFactor - 1)
         }
       }
@@ -108,7 +118,7 @@ class UARTRx(c: UARTParams) extends Module {
     is (s_data) {
       prescaler := prescaler_next
       when (pulse) {
-        // shift input data to sample
+        // sample scan in
         sample := Cat(sample, io.in)
         data_count := countdown >> c.oversample
         sample_count := countdown(c.oversample-1, 0)
